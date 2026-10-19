@@ -22,7 +22,7 @@ from frappe.model.base_document import get_controller
 from frappe.model.qb_query import DatabaseQuery
 from frappe.model.utils import is_virtual_doctype
 from frappe.utils import add_user_info, cint, cstr, format_duration, get_link_to_form
-from frappe.utils.data import sbool
+from frappe.utils.data import make_filter_tuple, sbool
 from frappe.utils.html_utils import clean_html
 
 DISALLOWED_PARAMS = ("cmd", "data", "ignore_permissions", "view", "user", "csrf_token", "join")
@@ -581,14 +581,16 @@ def _export_query(form_params, csv_params, populate_response=True):
 		visible_names = None
 
 	if selection := form_params.pop("selected_items", None):
-		form_params["filters"] = {"name": ("in", frappe.parse_json(selection))}
+		form_params["filters"] = _restrict_to_names(
+			form_params.get("filters"), doctype, frappe.parse_json(selection)
+		)
 
 	# visible_names is the client's ordered display sequence
-	# When present, take precedence over generic filters/order/pagination: fetch
+	# When present, take precedence over generic order/pagination: fetch
 	# exactly those rows, then reorder in Python below.
 	# Mirrors the visible_idx pattern in Query Report.
 	if visible_names:
-		form_params["filters"] = {"name": ("in", visible_names)}
+		form_params["filters"] = _restrict_to_names(form_params.get("filters"), doctype, visible_names)
 		form_params["order_by"] = None
 		form_params.pop("page_length", None)
 		form_params.pop("limit_page_length", None)
@@ -666,6 +668,14 @@ def _export_query(form_params, csv_params, populate_response=True):
 		return title, file_extension, content
 
 	provide_binary_file(_(title), file_extension, content)
+
+
+def _restrict_to_names(filters, doctype, names):
+	"""Add a `name in names` condition to `filters` instead of replacing them:
+	filters on child-table fields decide which child rows get exported."""
+	if isinstance(filters, dict):
+		filters = [make_filter_tuple(doctype, key, value) for key, value in filters.items()]
+	return [*(filters or []), [doctype, "name", "in", names]]
 
 
 def _reorder_by_visible_names(ret, fields, doctype, visible_names):
