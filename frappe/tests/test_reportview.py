@@ -127,6 +127,41 @@ class TestReportview(IntegrationTestCase):
 		exported_members = [cell for row in rows for cell in row if cell in set(members)]
 		self.assertEqual(sorted(exported_members), sorted(members))
 
+	def test_export_query_keeps_child_table_filters(self):
+		from csv import reader
+		from io import StringIO
+
+		members = [f"test_rv_filter_{i}@example.com" for i in range(5)]
+		for email in members:
+			create_user(email)
+
+		group = frappe.get_doc(
+			{
+				"doctype": "User Group",
+				"name": "Report Export Child Filters",
+				"user_group_members": [{"user": email} for email in members],
+			}
+		).insert()
+		self.addCleanup(group.delete)
+
+		wanted = members[2]
+		for param in ("visible_names", "selected_items"):
+			with self.subTest(param=param):
+				frappe.local.form_dict = frappe._dict(
+					doctype="User Group",
+					file_format_type="CSV",
+					fields=["`tabUser Group`.`name`", "`tabUser Group Member`.`user`"],
+					filters=[["User Group Member", "user", "=", wanted]],
+					**{param: json.dumps([group.name])},
+				)
+				export_query()
+
+				with StringIO(frappe.response["filecontent"].decode("utf-8")) as buf:
+					rows = list(reader(buf))[1:]
+
+				exported_members = [cell for row in rows for cell in row if cell in set(members)]
+				self.assertEqual(exported_members, [wanted])
+
 	def test_extract_fieldname(self):
 		self.assertEqual(
 			extract_fieldnames("count(distinct `tabPhoto`.name) as total_count")[0], "tabPhoto.name"
